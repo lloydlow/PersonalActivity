@@ -1,0 +1,72 @@
+---
+title: "Prediction Personal Activity"
+author: "Lloyd Low"
+date: "25/06/2017"
+output: html_document
+---
+
+
+## Executive summary
+Prediction of personal activity and correctness in which one performs weight lifting exercise is of interest to many people. Data from accelerometers on the belt, forearm, arm, and dumbell were collected from 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. This report shows the use of a random forest model with 4-fold cross validation being used to predict 20 tests datasets with unknown outcomes (i.e. the "classe" variable, which corresponds to the manner they did the exercise).  
+
+Data source:  http://groupware.les.inf.puc-rio.br/har
+
+## Tidy the dataset and explore it
+There are many missing values and empty cells in the given dataset. Removal of these missing values is the first step. Next, variables that do not seem to be predictors are removed as well. The trimmed dataset is explored for how the remaining variables are correlated with each other. There seem to be a number of highly correlated variables, which are those marked as dark red and dark blue in the correlation plot.
+```{r, echo = TRUE, fig.width=7.5, fig.height = 7, fig.align='center',message=FALSE}
+# Tidy up training and testing dataset and explore the trimmed dataset
+library(corrplot)
+library(caret)
+
+#read in training and testing dataset with empty cells converted to "NA"
+pml_train <- read.csv("pml-training.csv", header = TRUE, na.strings = c("NA", ""))
+pml_test <- read.csv("pml-testing.csv", header = TRUE, na.strings = c("NA", ""))
+
+#remove columns that contain "NA" in train dataset
+pml_train_trim <- pml_train[,colSums(is.na(pml_train)) == 0]
+#remove the same columns in test dataset to be consistent and check no "NA" exist in columns
+pml_test_trim <- pml_test[,colSums(is.na(pml_train)) == 0]
+sum(colSums(is.na(pml_test_trim)))
+
+#further remove variables that don't seem to be predictors i.e. "X","user_name",
+#"raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp","new_window","num_window"
+pml_train_trim <- pml_train_trim[,8:60]
+pml_test_trim <- pml_test_trim[,8:60]
+
+#Check how correlated the variables are to each other
+cor_mx <- cor(pml_train_trim[, -53])
+corrplot(cor_mx, order = "original", method = "color", type = "lower", tl.cex = 0.7,tl.col = "black")
+
+```
+## Preprocess with PCA, cross validate and random forest fit
+The widely used Random Forest classifier is used here with 4-fold cross validation. The outcome variable "classe" was predicted by all remaining variables of the dataset. Train set has 70% of the data whereas test set has 30% of data. Some of the highly correlated variables could be first removed but I used PCA preprocessing to take care of highly correlated variables by setting threshold that filter for principal components that explain 80% of the variation. The threshold is chosen for speed in mind while maintaining accuracy but if accuracy is of utmost importance then one should set higher threshold. 
+```{r, echo = TRUE, fig.width=4, fig.height = 4, fig.align='center',cache=TRUE,message=FALSE,warnings = FALSE}
+## Partition data to model_train, model_test, preprocess with PCA, fitted with random forest
+inTrain = createDataPartition(y = pml_train_trim$classe, p = 0.7, list = FALSE)
+model_train = pml_train_trim[inTrain, ]
+model_test = pml_train_trim[-inTrain, ]
+
+#Model fit, cross validate K-fold = 4, maintain 80% variation from PCA for speed
+modelFit <- train(classe ~ ., method = "rf", preProcess = "pca", data = model_train, 
+                  trControl = trainControl(method = "cv", number = 4,
+                                           preProcOptions = list(thresh = 0.8)))
+plot(modelFit)
+
+```
+
+## Prediction out of sample accuracy
+The accuracy of the set aside 30% of the data is about 95.6%. Activity labeled "E" seems quite distinct from the others making it easier to predict from the rest of the outcome variables with rooms to further improve the accuracy by setting the PCA preprocessing threshold higher.
+```{r, echo = TRUE, fig.width=9, fig.height = 6, fig.align='center', cache=TRUE}
+#Prediction on model_test and evaluate out of sample accuracy
+pred_valid_rf <- predict(modelFit, model_test)
+confuse_mx <- confusionMatrix(model_test$classe, pred_valid_rf)
+confuse_mx$table
+confuse_mx <- confusionMatrix(model_test$classe, pred_valid_rf)$overall[1]
+confuse_mx
+outOfSampleError <- 1 - confusionMatrix(model_test$classe, pred_valid_rf)$overall[[1]]
+outOfSampleError
+
+#Prediction on the 20 unknowns test cases given in the assignment
+pred_final <- predict(modelFit, pml_test_trim[, -53])
+pred_final
+```
